@@ -1,0 +1,39 @@
+{
+	"Instruments": [
+		{
+			"Name": "olc_Harmonica",
+			"A": 0.0,
+			"D": 1.0,
+			"S": 0.95,
+			"R": 0.1,
+			"Amp": 0.3,
+			"MaxLife": -1.0,
+			"Sounds": [
+				{
+					"Amp": 1.0,
+					"Freq": 0,
+					"Type": "SawA",
+					"LFreq": 5.0,
+					"LAmp": 0.001,
+					"Cust": 100
+				},
+				{
+					"Amp": 1.0,
+					"Freq": 12,
+					"Type": "Square",
+					"LFreq": 5.0,
+					"LAmp": 0.001,
+					"Harmonics": 10,
+					"DecayType": "Linear",
+					"Decay": 50,
+					"EvenOddBalance": 20
+				},
+				{
+					"Amp": 0.05,
+					"Freq": 36,
+					"Type": "Noise"
+				}
+			]
+		}
+	]
+}
