@@ -25,6 +25,8 @@ namespace Synth
 		EXPONENTIAL,
 	};
 
+	constexpr auto BaseNoteID = 64;
+
 	WaveType strToWaveType(const std::string_view str);
 	std::string waveTypeToStr(const WaveType wt);
 	HarmonicDecayType strToHarmonicDecayType(const std::string_view str);
@@ -70,6 +72,7 @@ namespace Synth
 		int id = 0;		// Position in scale
 		FTYPE on = 0;	// Time note was activated
 		FTYPE off = 0;	// Time note was deactivated
+		FTYPE velocity = 1.0; // how lound is this note, relative to the base loudness of the instrument
 		bool active = false;
 	};
 
@@ -212,7 +215,8 @@ namespace Synth
 		struct Channel
 		{
 			Instrument* instrument;
-			std::string sBeat;
+			std::vector<int> sBeat;
+			bool bMuted = false;
 		};
 
 	public:

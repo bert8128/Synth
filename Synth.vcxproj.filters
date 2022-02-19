@@ -24,10 +24,24 @@
     <ClInclude Include="olcNoiseMaker.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="JSON.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Synth.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Synthesiser.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="Synth.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="Instruments.json">
+      <Filter>Resource Files</Filter>
+    </Text>
   </ItemGroup>
 </Project>

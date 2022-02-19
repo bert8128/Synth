@@ -96,7 +96,7 @@ void safe_remove(T &v, lambda f)
 // Returns amplitude (-1.0 to +1.0) as a function of time
 FTYPE MakeNoise(int /*nChannel*/, FTYPE dTime)
 {	
-	std::unique_lock<std::mutex> lm(muxNotes);
+	std::lock_guard  lock(muxNotes);
 	FTYPE dMixedOutput = 0.0;
 
 	// Iterate through all active notes, and mix together
@@ -107,7 +107,7 @@ FTYPE MakeNoise(int /*nChannel*/, FTYPE dTime)
 
 		// Get sample for this note by using the correct instrument and envelope
 		if (c != nullptr)
-			dSound = c->sound(dTime, n, bNoteFinished);
+			dSound = c->sound(dTime, n, bNoteFinished) * n.velocity;
 		
 		// Mix into output
 		dMixedOutput += dSound;
@@ -124,7 +124,7 @@ class Synthesiser : public olc::PixelGameEngine
 {
 public:
 	Synthesiser()
-		: sequencer(90.0f, 4, 4)
+		: sequencer(60.0f, 4, 4)
 	{
 		// Name your application
 		sAppName = "Synth";
@@ -176,9 +176,34 @@ bool Synthesiser::OnUserCreate()
 	auto snare = sequencer.AddInstrument(&instSnare);
 	auto hh = sequencer.AddInstrument(&instHiHat);
 
-	sequencer.vecChannel[kick ].sBeat = "X...X...X..X.X..";
-	sequencer.vecChannel[snare].sBeat = "..X...X...X...X.";
-	sequencer.vecChannel[hh   ].sBeat = "X.X.X.X.X.X.X.XX";
+	auto stringToIntArray = [](const std::string_view str)
+	{
+		std::vector<int> ar;
+		ar.reserve(str.size());
+		auto intForChar = [](const char ch)
+		{
+			switch (ch)
+			{
+			case '_':
+				return 2;
+			case '-':
+				return 4;
+			case '^':
+				return 6;
+			case '#':
+				return 8;
+			}
+			return 0;
+		};
+
+		for (auto ch : str)
+			ar.push_back(intForChar(ch));
+		return ar;
+	};
+	
+	sequencer.vecChannel[kick ].sBeat = stringToIntArray("^...^...^..^.^..");
+	sequencer.vecChannel[snare].sBeat = stringToIntArray("..#...#...#...#.");
+	sequencer.vecChannel[hh   ].sBeat = stringToIntArray("^.-.^.-.^._.^._^");
 
 	// at the end
 	m_Start = sound.GetTime();
@@ -200,13 +225,14 @@ bool Synthesiser::OnUserUpdate(float fElapsedTime)
 
 	// sequenceruencer (generates notes, note offs applied by note lifespan) ======================================
 	sequencer.Update(fElapsedTime);
-	muxNotes.lock();
-	for (auto& note : sequencer.vecNotes)
 	{
-		note.m_Note.on = dTimeNow;
-		vecNotes.emplace_back(note);
+		std::lock_guard  lock(muxNotes);
+		for (auto& note : sequencer.vecNotes)
+		{
+			note.m_Note.on = dTimeNow;
+			vecNotes.emplace_back(note);
+		}
 	}
-	muxNotes.unlock();
 
 	// Keyboard (generates and removes notes depending on key state) ========================================
 	// Note : olc::OEM_2 is the the /? key
@@ -214,47 +240,48 @@ bool Synthesiser::OnUserUpdate(float fElapsedTime)
 
 	for (int k = 0; k < Keyboard.size(); ++k)
 	{
-		auto key = GetKey(Keyboard[k]);
+		const auto key = GetKey(Keyboard[k]);
 
 		// Check if note already exists in currently playing notes
-		muxNotes.lock();
-		auto noteFound = find_if(vecNotes.begin(), vecNotes.end(), [&k, pKeyboardInstrument= pKeyboardInstrument](const Synth::NoteInstrumentPtr& item){ return item.m_Note.id == k + 64 && item.m_pInstrument == pKeyboardInstrument; } );
-		if (noteFound == vecNotes.end())
 		{
-			// Note not found in vector
-			if (key.bHeld)
+			std::lock_guard  lock(muxNotes);
+			auto noteFound = find_if(vecNotes.begin(), vecNotes.end(), [&k, pKeyboardInstrument = pKeyboardInstrument](const Synth::NoteInstrumentPtr& item) { return item.m_Note.id == k + Synth::BaseNoteID && item.m_pInstrument == pKeyboardInstrument; });
+			if (noteFound == vecNotes.end())
 			{
-				// Key has been pressed so create a new note
-				Synth::Note note;
-				note.id = k + 64;
-				note.on = dTimeNow;
-				note.active = true;
-
-				// Add note to vector
-				vecNotes.emplace_back(note, pKeyboardInstrument);
-			}
-		}
-		else
-		{
-			// Note exists in vector
-			if (key.bHeld)
-			{
-				// Key is still held, so do nothing
-				if (noteFound->m_Note.off > noteFound->m_Note.on)
+				// Note not found in vector
+				if (key.bHeld)
 				{
-					// Key has been pressed again during release phase
-					noteFound->m_Note.on = dTimeNow;
-					noteFound->m_Note.active = true;
+					// Key has been pressed so create a new note
+					Synth::Note note;
+					note.id = k + Synth::BaseNoteID;
+					note.on = dTimeNow;
+					note.active = true;
+
+					// Add note to vector
+					vecNotes.emplace_back(note, pKeyboardInstrument);
 				}
 			}
 			else
 			{
-				// Key has been released, so switch off
-				if (noteFound->m_Note.off < noteFound->m_Note.on)
-					noteFound->m_Note.off = dTimeNow;
+				// Note exists in vector
+				if (key.bHeld)
+				{
+					// Key is still held, so do nothing
+					if (noteFound->m_Note.off > noteFound->m_Note.on)
+					{
+						// Key has been pressed again during release phase
+						noteFound->m_Note.on = dTimeNow;
+						noteFound->m_Note.active = true;
+					}
+				}
+				else
+				{
+					// Key has been released, so switch off
+					if (noteFound->m_Note.off < noteFound->m_Note.on)
+						noteFound->m_Note.off = dTimeNow;
+				}
 			}
 		}
-		muxNotes.unlock();
 	}
 
 	// --- VISUAL STUFF ---
@@ -273,15 +300,76 @@ bool Synthesiser::OnUserUpdate(float fElapsedTime)
 		for (int subbeats = 1; subbeats < sequencer.nSubBeats; ++subbeats)
 			DrawString(w2s((beats * sequencer.nSubBeats) + subbeats + colx2, row), ".");
 	}
+	// Draw Beat Cursor
+	DrawString(w2s(colx2 + sequencer.nCurrentBeat, 1), "|");
+
 	// Draw Sequences
+	const auto tlNames = w2s(colx1, row+1);
+	const auto maxxNames = w2s(colx2 - 1, 0).x;
+	const auto tlBeats = w2s(colx2, row+1);
+	auto maxxBeats = 0;
+	auto maxy = 0;
 	for (auto v : sequencer.vecChannel)
 	{
 		++row;
-		DrawString(w2s(colx1, row), v.instrument->name);
-		DrawString(w2s(colx2, row), v.sBeat);
+		const auto colour = v.bMuted ? olc::GREY : olc::WHITE;
+		DrawString(w2s(colx1, row), v.instrument->name, colour);
+		auto col = 0;
+		for (auto vol : v.sBeat)
+		{
+			const auto [x,y] = w2s(colx2 + col, row);
+
+			if (vol == 0)
+			{
+				FillRect(x, y, 6, 8, olc::BLUE);
+			}
+			else if (vol < 8)
+			{
+				FillRect(x, y, 6, 8, olc::DARK_BLUE);
+				FillRect(x, y+(8-vol), 6, vol, colour);
+			}
+			else
+			{
+				FillRect(x, y, 6, 8, colour);
+			}
+
+			if (x > maxxBeats)
+				maxxBeats = x;
+			if (y > maxy)
+				maxy = y;
+			++col;
+		}
 	}
-	// Draw Beat Cursor
-	DrawString(w2s(colx2 + sequencer.nCurrentBeat, 1), "|");
+	if (GetMouse(0).bReleased)
+	{
+		auto pos = GetMousePos();
+
+		const auto brBeats = olc::vi2d(maxxBeats + 8, maxy + 10);
+		if (pos.x >= tlBeats.x && pos.x <= brBeats.x &&
+			pos.y >= tlBeats.y && pos.y <= brBeats.y)
+		{
+			// change volume of beat
+			auto clickedCol = (pos.x - tlBeats.x) / 8;
+			auto clickedRow = (pos.y - tlBeats.y) / 10;
+			auto& v = sequencer.vecChannel[clickedRow];
+			auto& ch = v.sBeat[clickedCol];
+			ch = ch + 2;
+			if (ch > 8)
+				ch = 0;
+		}
+		else
+		{
+			const auto brNames = olc::vi2d(maxxNames + 8, maxy + 10);
+			if (pos.x >= tlNames.x && pos.x <= brNames.x &&
+				pos.y >= tlNames.y && pos.y <= brNames.y)
+			{
+				// mute/unmute
+				auto clickedRow = (pos.y - tlNames.y) / 10;
+				auto& v = sequencer.vecChannel[clickedRow];
+				v.bMuted = !v.bMuted;
+			}
+		}
+	}
 
 	// Draw Keyboard
 	row += 1;
