@@ -63,12 +63,13 @@ See video: https://youtu.be/tgamhuQnOkM
 using FTYPE = double;
 #include "olcNoiseMaker.h"
 
+#include "Synth.h"
+#include "UI.h"
+
 #include <list>
 #include <iostream>
 #include <algorithm>
 #include <assert.h>
-
-#include "Synth.h"
 
 std::vector<Synth::NoteInstrumentPtr> vecNotes;
 std::mutex muxNotes;
@@ -148,10 +149,15 @@ private:
 	std::vector<Synth::CustomInstrument> customInstruments;
 
 	Synth::Instrument* pKeyboardInstrument;
+
+	std::vector<std::unique_ptr<Window>> m_Windows;
+
+	std::unique_ptr<olc::Sprite> m_pPencilIcon;
 };
 
 bool Synthesiser::OnUserCreate()
 {
+	m_pPencilIcon = std::make_unique<olc::Sprite>("pencil-icon.png");
 	customInstruments = Synth::loadInstruments();
 	if (customInstruments.empty())
 		pKeyboardInstrument = &instHarm;
@@ -205,6 +211,18 @@ bool Synthesiser::OnUserCreate()
 	sequencer.vecChannel[snare].sBeat = stringToIntArray("..#...#...#...#.");
 	sequencer.vecChannel[hh   ].sBeat = stringToIntArray("^.-.^.-.^._.^._^");
 
+	const auto startX = 20;
+	const auto startY = 20;
+	const auto rowHeight = 10;
+	auto row = 0;
+	m_Windows.push_back(std::make_unique<WLabel>(*this, startX, startY + (row * rowHeight), 120, rowHeight, false, "Sequencer", olc::WHITE, olc::DARK_BLUE));
+	++row;
+	for (auto v : sequencer.vecChannel)
+	{
+		m_Windows.push_back(std::make_unique<WLabel>(*this, startX, startY + (row * rowHeight), 120, rowHeight, false, v.instrument->name, olc::WHITE, olc::DARK_BLUE));
+		++row;
+	}
+
 	// at the end
 	m_Start = sound.GetTime();
 
@@ -238,14 +256,14 @@ bool Synthesiser::OnUserUpdate(float fElapsedTime)
 	// Note : olc::OEM_2 is the the /? key
 	constexpr auto Keyboard = std::to_array({ olc::Z, olc::S, olc::X, olc::C, olc::F, olc::V, olc::G, olc::B, olc::N, olc::J, olc::M, olc::K, olc::COMMA, olc::L, olc::PERIOD, olc::OEM_2 });
 
-	for (int k = 0; k < Keyboard.size(); ++k)
+	for (int k = 0; k < static_cast<int>(Keyboard.size()); ++k)
 	{
 		const auto key = GetKey(Keyboard[k]);
 
 		// Check if note already exists in currently playing notes
 		{
 			std::lock_guard  lock(muxNotes);
-			auto noteFound = find_if(vecNotes.begin(), vecNotes.end(), [&k, pKeyboardInstrument = pKeyboardInstrument](const Synth::NoteInstrumentPtr& item) { return item.m_Note.id == k + Synth::BaseNoteID && item.m_pInstrument == pKeyboardInstrument; });
+			auto noteFound = find_if(vecNotes.begin(), vecNotes.end(), [&k, pKeyboardInstrument = pKeyboardInstrument](const Synth::NoteInstrumentPtr& item) { return (item.m_Note.id == k + Synth::BaseNoteID) && (item.m_pInstrument == pKeyboardInstrument); });
 			if (noteFound == vecNotes.end())
 			{
 				// Note not found in vector
@@ -293,7 +311,10 @@ bool Synthesiser::OnUserUpdate(float fElapsedTime)
 	constexpr int colx1 = 2;
 	constexpr int colx2 = 16;
 	int row = 2;
-	DrawString(w2s(colx1, row), "SEQUENCER:");
+	const auto seqColour = sequencer.muted()
+		? olc::GREY
+		: olc::WHITE;
+	//DrawString(w2s(colx1, row), "SEQUENCER:", seqColour);
 	for (int beats = 0; beats < sequencer.nBeats; ++beats)
 	{
 		DrawString(w2s(beats * sequencer.nSubBeats + colx2, row), "O");
@@ -304,7 +325,8 @@ bool Synthesiser::OnUserUpdate(float fElapsedTime)
 	DrawString(w2s(colx2 + sequencer.nCurrentBeat, 1), "|");
 
 	// Draw Sequences
-	const auto tlNames = w2s(colx1, row+1);
+	const auto tlSequencer = w2s(colx1, row);
+	const auto tlNames = w2s(colx1, row + 1);
 	const auto maxxNames = w2s(colx2 - 1, 0).x;
 	const auto tlBeats = w2s(colx2, row+1);
 	auto maxxBeats = 0;
@@ -312,8 +334,19 @@ bool Synthesiser::OnUserUpdate(float fElapsedTime)
 	for (auto v : sequencer.vecChannel)
 	{
 		++row;
-		const auto colour = v.bMuted ? olc::GREY : olc::WHITE;
-		DrawString(w2s(colx1, row), v.instrument->name, colour);
+		const auto colour = [&sequencer = sequencer, &v]()
+		{
+			if (sequencer.muted())
+			{
+				if (v.bMuted)
+					return olc::VERY_DARK_GREY;
+				return olc::DARK_GREY;
+			}
+			if (v.bMuted)
+				return olc::GREY;
+			return olc::WHITE;
+		}();
+		/*DrawString(w2s(colx1, row), v.instrument->name, colour); */
 		auto col = 0;
 		for (auto vol : v.sBeat)
 		{
@@ -359,15 +392,27 @@ bool Synthesiser::OnUserUpdate(float fElapsedTime)
 		}
 		else
 		{
-			const auto brNames = olc::vi2d(maxxNames + 8, maxy + 10);
-			if (pos.x >= tlNames.x && pos.x <= brNames.x &&
-				pos.y >= tlNames.y && pos.y <= brNames.y)
+			const auto brSequencer = olc::vi2d(maxxNames + 8, 30);
+			if (pos.x >= tlSequencer.x && pos.x <= brSequencer.x &&
+				pos.y >= tlSequencer.y && pos.y <= brSequencer.y)
 			{
-				// mute/unmute
-				auto clickedRow = (pos.y - tlNames.y) / 10;
-				auto& v = sequencer.vecChannel[clickedRow];
-				v.bMuted = !v.bMuted;
+				// mute/unmute entire sequencer
+				sequencer.bMuted = !sequencer.bMuted;
 			}
+			/*else
+			{
+				 // mute/unmute single channel
+				const auto brNames = olc::vi2d(maxxNames + 8, maxy + 10);
+				if (pos.x >= tlNames.x && pos.x <= brNames.x &&
+					pos.y >= tlNames.y && pos.y <= brNames.y)
+				{
+					// mute/unmute
+					auto clickedRow = (pos.y - tlNames.y) / 10;
+					auto& v = sequencer.vecChannel[clickedRow];
+					v.bMuted = !v.bMuted;
+				}
+			}
+			*/
 		}
 	}
 
@@ -390,6 +435,15 @@ bool Synthesiser::OnUserUpdate(float fElapsedTime)
 	}
 	std::string stats = "Notes: " + std::to_string(vecNotes.size()) + " Wall Time: " + std::to_string(dWallTime) + " CPU Time: " + std::to_string(dTimeNow) + " Latency: " + std::to_string(dWallTime - dTimeNow) + (m_FPS ? " FPS: " : "") + (m_FPS ? std::to_string(m_FPS) : std::string());
 	DrawString(w2s(colx1, ++row), stats);
+
+
+	for (auto& w : m_Windows)
+	{
+		w->draw();
+	}
+
+	FillRect(140, 140, 100, 100, olc::RED);
+	DrawSprite(150, 150, m_pPencilIcon.get());
 
 	return true;
 }

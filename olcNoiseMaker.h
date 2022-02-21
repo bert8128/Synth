@@ -238,7 +238,7 @@ private:
 
 	// Main thread. This loop responds to requests from the soundcard to fill 'blocks'
 	// with audio data. If no requests are available it goes dormant until the sound
-	// card is ready for more data. The block is fille by the "user" in some manner
+	// card is ready for more data. The block is filled by the "user" in some manner
 	// and then issued to the soundcard.
 	void MainThread()
 	{

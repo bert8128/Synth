@@ -263,9 +263,9 @@ namespace Synth
 				nCurrentBeat = 0;
 
 			int channel = 0;
-			for (auto v : vecChannel)
+			for (const auto& v : vecChannel)
 			{
-				if (v.bMuted)
+				if (muted(v))
 					continue;
 				const auto currentBeatVol = v.sBeat[nCurrentBeat];
 				if (currentBeatVol > 0)
@@ -274,7 +274,8 @@ namespace Synth
 					note.active = true;
 					note.id = BaseNoteID;
 					note.velocity = currentBeatVol / 6.0f;
-					vecNotes.emplace_back(note, vecChannel[channel].instrument);
+					//vecNotes.emplace_back(note, vecChannel[channel].instrument);
+					vecNotes.emplace_back(note, v.instrument);
 				}
 				++channel;
 			}

@@ -234,10 +234,14 @@ namespace Synth
 		FTYPE fAccumulate;
 		int nCurrentBeat;
 		int nTotalBeats;
+		bool bMuted = false;
 
 	public:
 		std::vector<Channel> vecChannel;
 		std::vector<NoteInstrumentPtr> vecNotes;
+
+		bool muted() const { return bMuted; }
+		bool muted(const Channel& v) const { return bMuted || v.bMuted; }
 
 
 	private:

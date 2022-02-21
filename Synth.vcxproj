@@ -26,10 +26,12 @@
     <ClInclude Include="olcNoiseMaker.h" />
     <ClInclude Include="olcPixelGameEngine.h" />
     <ClInclude Include="Synth.h" />
+    <ClInclude Include="UI.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Synth.cpp" />
     <ClCompile Include="Synthesiser.cpp" />
+    <ClCompile Include="UI.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="Instruments.json" />
