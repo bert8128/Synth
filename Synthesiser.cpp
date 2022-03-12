@@ -71,54 +71,57 @@ using FTYPE = double;
 #include <algorithm>
 #include <assert.h>
 
-std::vector<Synth::NoteInstrumentPtr> vecNotes;
-std::mutex muxNotes;
-//Synth::Instrument_bell instBell;
-Synth::Instrument_harmonica instHarm;
-Synth::Instrument_drumkick instKick;
-Synth::Instrument_drumsnare instSnare;
-Synth::Instrument_drumhihat instHiHat;
-
-typedef bool(*lambda)(const Synth::NoteInstrumentPtr& item);
-template<class T>
-void safe_remove(T &v, lambda f)
+namespace
 {
-	auto n = v.begin();
-	while (n != v.end())
+	std::vector<Synth::NoteInstrumentPtr> vecNotes;
+	std::mutex muxNotes;
+	//Synth::Instrument_bell instBell;
+	Synth::Instrument_harmonica instHarm;
+	Synth::Instrument_drumkick instKick;
+	Synth::Instrument_drumsnare instSnare;
+	Synth::Instrument_drumhihat instHiHat;
+
+	typedef bool(*lambda)(const Synth::NoteInstrumentPtr& item);
+	template<class T>
+	void safe_remove(T& v, lambda f)
 	{
-		if (!f(*n))
-			n = v.erase(n);
-		else
-			++n;
+		auto n = v.begin();
+		while (n != v.end())
+		{
+			if (!f(*n))
+				n = v.erase(n);
+			else
+				++n;
+		}
 	}
-}
 
-// Function used by olcNoiseMaker to generate sound waves
-// Returns amplitude (-1.0 to +1.0) as a function of time
-FTYPE MakeNoise(int /*nChannel*/, FTYPE dTime)
-{	
-	std::lock_guard  lock(muxNotes);
-	FTYPE dMixedOutput = 0.0;
-
-	// Iterate through all active notes, and mix together
-	for (auto& [n, c] : vecNotes)
+	// Function used by olcNoiseMaker to generate sound waves
+	// Returns amplitude (-1.0 to +1.0) as a function of time
+	FTYPE MakeNoise(int /*nChannel*/, FTYPE dTime)
 	{
-		bool bNoteFinished = false;
-		FTYPE dSound = 0;
+		std::lock_guard  lock(muxNotes);
+		FTYPE dMixedOutput = 0.0;
 
-		// Get sample for this note by using the correct instrument and envelope
-		if (c != nullptr)
-			dSound = c->sound(dTime, n, bNoteFinished) * n.velocity;
-		
-		// Mix into output
-		dMixedOutput += dSound;
+		// Iterate through all active notes, and mix together
+		for (auto& [n, c] : vecNotes)
+		{
+			bool bNoteFinished = false;
+			FTYPE dSound = 0;
 
-		if (bNoteFinished) // Flag note to be removed
-			n.active = false;
+			// Get sample for this note by using the correct instrument and envelope
+			if (c != nullptr)
+				dSound = c->sound(dTime, n, bNoteFinished) * n.velocity;
+
+			// Mix into output
+			dMixedOutput += dSound;
+
+			if (bNoteFinished) // Flag note to be removed
+				n.active = false;
+		}
+		// Remove notes which are now inactive
+		safe_remove(vecNotes, [](const Synth::NoteInstrumentPtr& item) { return item.m_Note.active; });
+		return dMixedOutput * 0.2;
 	}
-	// Remove notes which are now inactive
-	safe_remove(vecNotes, [](const Synth::NoteInstrumentPtr& item) { return item.m_Note.active; });
-	return dMixedOutput * 0.2;
 }
 
 class Synthesiser : public olc::PixelGameEngine
@@ -135,6 +138,14 @@ public:
 	bool OnUserCreate() override;
 	bool OnUserUpdate(float fElapsedTime) override;
 private:
+	// call backs
+	static void toggleMuteAll(Window* pWnd,void* pThis, void* pParam);
+	static void toggleMuteChannel(Window* pWnd, void* pThis, void* pParam);
+	static olc::vi2d w2s(int x, int y);
+	static constexpr int m_startX = 20;
+	static constexpr int m_startY = 20;
+	static constexpr int m_rowHeight = 13;
+
 	double dWallTime = 0.0;
 
 	std::vector<std::string> devices;
@@ -151,8 +162,61 @@ private:
 	Synth::Instrument* pKeyboardInstrument;
 
 	std::vector<std::unique_ptr<Window>> m_Windows;
+	std::vector<WLevels*> m_Levels;
 
 	std::unique_ptr<olc::Sprite> m_pPencilIcon;
+};
+
+/* static */ void Synthesiser::toggleMuteAll(Window* pWnd, void* pThis, void* /*pParam*/)
+{
+	if (!pThis)
+		return;
+	auto pSynth = reinterpret_cast<Synthesiser*>(pThis);
+	pSynth->sequencer.bMuted = !pSynth->sequencer.bMuted;
+	if (pWnd)
+	{
+		auto pButton = static_cast<WButton*>(pWnd);
+		if (pSynth->sequencer.bMuted)
+			pButton->setFgCol(olc::GREY);
+		else
+			pButton->setFgCol(olc::WHITE);
+	}
+	for (auto pLevel : pSynth->m_Levels)
+		pLevel->setGlobalMute(pSynth->sequencer.bMuted);
+}
+
+/* static */ void Synthesiser::toggleMuteChannel(Window* pWnd, void* pThis, void* pParam)
+{
+	if (!pThis)
+		return;
+	if (!pParam)
+		return;
+
+	auto pSynth = reinterpret_cast<Synthesiser*>(pThis);
+	auto pName = reinterpret_cast<const std::string*>(pParam);
+	for (size_t i=0; i< pSynth->sequencer.vecChannel.size(); ++i)
+	{
+		auto& ch = pSynth->sequencer.vecChannel[i];
+		if (ch.instrument && ch.instrument->name == *pName)
+		{
+			ch.bMuted = !ch.bMuted;
+			if (pWnd)
+			{
+				auto pButton = static_cast<WButton*>(pWnd);
+				if (ch.bMuted)
+					pButton->setFgCol(olc::GREY);
+				else
+					pButton->setFgCol(olc::WHITE);
+			}
+			pSynth->m_Levels[i]->setLocalMute(ch.bMuted);
+			break;
+		}
+	}
+}
+
+olc::vi2d Synthesiser::w2s(int x, int y)
+{
+	return { m_startX + x * 8, m_startY + y * m_rowHeight };
 };
 
 bool Synthesiser::OnUserCreate()
@@ -211,15 +275,29 @@ bool Synthesiser::OnUserCreate()
 	sequencer.vecChannel[snare].sBeat = stringToIntArray("..#...#...#...#.");
 	sequencer.vecChannel[hh   ].sBeat = stringToIntArray("^.-.^.-.^._.^._^");
 
-	const auto startX = 20;
-	const auto startY = 20;
-	const auto rowHeight = 10;
 	auto row = 0;
-	m_Windows.push_back(std::make_unique<WLabel>(*this, startX, startY + (row * rowHeight), 120, rowHeight, false, "Sequencer", olc::WHITE, olc::DARK_BLUE));
-	++row;
-	for (auto v : sequencer.vecChannel)
 	{
-		m_Windows.push_back(std::make_unique<WLabel>(*this, startX, startY + (row * rowHeight), 120, rowHeight, false, v.instrument->name, olc::WHITE, olc::DARK_BLUE));
+		const auto x = m_startX;
+		const auto y = m_startY + (row * m_rowHeight);
+		auto pSequencer = std::make_unique<WButton>(*this, x, y, 100, m_rowHeight, false, "Sequencer", olc::WHITE, olc::DARK_BLUE);
+		pSequencer->setMouseLeftButtonReleasedCallback(Synthesiser::toggleMuteAll, this, nullptr);
+		m_Windows.push_back(std::move(pSequencer));
+	}
+	++row;
+
+	for (auto& v : sequencer.vecChannel)
+	{
+		const auto x = m_startX;
+		const auto y = m_startY + (row * m_rowHeight);
+
+		auto pChannel = std::make_unique<WButton>(*this, x, y, 100, m_rowHeight, false, v.instrument->name, olc::WHITE, olc::DARK_BLUE);
+		pChannel->setMouseLeftButtonReleasedCallback(Synthesiser::toggleMuteChannel, this, &v.instrument->name);
+		m_Windows.push_back(std::move(pChannel));
+
+		auto pLevels = std::make_unique<WLevels>(*this, x+112, y, 8, m_rowHeight, false, v.sBeat, olc::VERY_DARK_GREY, olc::DARK_GREY, olc::GREY, olc::WHITE, olc::BLUE, olc::DARK_BLUE);
+		m_Levels.push_back(pLevels.get());
+		m_Windows.push_back(std::move(pLevels));
+		
 		++row;
 	}
 
@@ -229,10 +307,19 @@ bool Synthesiser::OnUserCreate()
 	return true;
 }
 
-olc::vi2d w2s(int x, int y)
+namespace
 {
-	return { x * 8, y * 10 };
-};
+	template <typename T>
+	void log(T&& t)
+	{
+		std::cout << t << "\n";
+	}
+	template <typename T1, typename T2>
+	void log(T1&& t1, T2&& t2)
+	{
+		std::cout << t1 << " " << t2 << "\n";
+	}
+}
 
 bool Synthesiser::OnUserUpdate(float fElapsedTime)
 {
@@ -241,6 +328,28 @@ bool Synthesiser::OnUserUpdate(float fElapsedTime)
 	dWallTime += fElapsedTime;
 	FTYPE dTimeNow = sound.GetTime();
 
+	// ui events
+	{
+		const auto mPos = GetMousePos();
+		const auto lButtonDn = GetMouse(0).bPressed;
+		const auto lButtonUp = GetMouse(0).bReleased;
+		const auto lButtonHeld = GetMouse(0).bHeld;
+		for (auto& w : m_Windows)
+		{
+			if (w->mousePos(mPos.x, mPos.y))
+			{
+				w->mouseLeftButtonPressed(lButtonDn);
+				w->mouseLeftButtonReleased(lButtonUp);
+				w->mouseLeftButtonHeld(lButtonHeld);
+			}
+			else
+			{
+				w->mouseLeftButtonPressed(false);
+				w->mouseLeftButtonReleased(false);
+				w->mouseLeftButtonHeld(false);
+			}
+		}
+	}
 	// sequenceruencer (generates notes, note offs applied by note lifespan) ======================================
 	sequencer.Update(fElapsedTime);
 	{
@@ -308,116 +417,32 @@ bool Synthesiser::OnUserUpdate(float fElapsedTime)
 
 	// Draw Sequencer
 
-	constexpr int colx1 = 2;
-	constexpr int colx2 = 16;
-	int row = 2;
-	const auto seqColour = sequencer.muted()
-		? olc::GREY
-		: olc::WHITE;
-	//DrawString(w2s(colx1, row), "SEQUENCER:", seqColour);
+	constexpr int colx1 = 0;
+	constexpr int colx2 = 14;
+	int row = 0;
 	for (int beats = 0; beats < sequencer.nBeats; ++beats)
 	{
-		DrawString(w2s(beats * sequencer.nSubBeats + colx2, row), "O");
+		{
+			auto xy = w2s(beats * sequencer.nSubBeats + colx2, row);
+			xy.y += 3;
+			DrawString(xy, "O");
+		}
 		for (int subbeats = 1; subbeats < sequencer.nSubBeats; ++subbeats)
-			DrawString(w2s((beats * sequencer.nSubBeats) + subbeats + colx2, row), ".");
-	}
-	// Draw Beat Cursor
-	DrawString(w2s(colx2 + sequencer.nCurrentBeat, 1), "|");
-
-	// Draw Sequences
-	const auto tlSequencer = w2s(colx1, row);
-	const auto tlNames = w2s(colx1, row + 1);
-	const auto maxxNames = w2s(colx2 - 1, 0).x;
-	const auto tlBeats = w2s(colx2, row+1);
-	auto maxxBeats = 0;
-	auto maxy = 0;
-	for (auto v : sequencer.vecChannel)
-	{
-		++row;
-		const auto colour = [&sequencer = sequencer, &v]()
 		{
-			if (sequencer.muted())
-			{
-				if (v.bMuted)
-					return olc::VERY_DARK_GREY;
-				return olc::DARK_GREY;
-			}
-			if (v.bMuted)
-				return olc::GREY;
-			return olc::WHITE;
-		}();
-		/*DrawString(w2s(colx1, row), v.instrument->name, colour); */
-		auto col = 0;
-		for (auto vol : v.sBeat)
-		{
-			const auto [x,y] = w2s(colx2 + col, row);
-
-			if (vol == 0)
-			{
-				FillRect(x, y, 6, 8, olc::BLUE);
-			}
-			else if (vol < 8)
-			{
-				FillRect(x, y, 6, 8, olc::DARK_BLUE);
-				FillRect(x, y+(8-vol), 6, vol, colour);
-			}
-			else
-			{
-				FillRect(x, y, 6, 8, colour);
-			}
-
-			if (x > maxxBeats)
-				maxxBeats = x;
-			if (y > maxy)
-				maxy = y;
-			++col;
+			auto xy = w2s((beats * sequencer.nSubBeats) + subbeats + colx2, row);
+			xy.y += 3;
+			DrawString(xy, ".");
 		}
 	}
-	if (GetMouse(0).bReleased)
 	{
-		auto pos = GetMousePos();
-
-		const auto brBeats = olc::vi2d(maxxBeats + 8, maxy + 10);
-		if (pos.x >= tlBeats.x && pos.x <= brBeats.x &&
-			pos.y >= tlBeats.y && pos.y <= brBeats.y)
-		{
-			// change volume of beat
-			auto clickedCol = (pos.x - tlBeats.x) / 8;
-			auto clickedRow = (pos.y - tlBeats.y) / 10;
-			auto& v = sequencer.vecChannel[clickedRow];
-			auto& ch = v.sBeat[clickedCol];
-			ch = ch + 2;
-			if (ch > 8)
-				ch = 0;
-		}
-		else
-		{
-			const auto brSequencer = olc::vi2d(maxxNames + 8, 30);
-			if (pos.x >= tlSequencer.x && pos.x <= brSequencer.x &&
-				pos.y >= tlSequencer.y && pos.y <= brSequencer.y)
-			{
-				// mute/unmute entire sequencer
-				sequencer.bMuted = !sequencer.bMuted;
-			}
-			/*else
-			{
-				 // mute/unmute single channel
-				const auto brNames = olc::vi2d(maxxNames + 8, maxy + 10);
-				if (pos.x >= tlNames.x && pos.x <= brNames.x &&
-					pos.y >= tlNames.y && pos.y <= brNames.y)
-				{
-					// mute/unmute
-					auto clickedRow = (pos.y - tlNames.y) / 10;
-					auto& v = sequencer.vecChannel[clickedRow];
-					v.bMuted = !v.bMuted;
-				}
-			}
-			*/
-		}
+		// Draw Beat Cursor
+		auto xy = w2s(colx2 + sequencer.nCurrentBeat, 0);
+		xy.y = xy.y - m_rowHeight + 3;
+		DrawString(xy, "|");
 	}
 
 	// Draw Keyboard
-	row += 1;
+	row += static_cast<int>(sequencer.vecChannel.size()+1);
 	DrawString(w2s(colx1, ++row), "|   |   |   |   |   | |   |   |   |   | |   | |   |   |   |  ");
 	DrawString(w2s(colx1, ++row), "|   | S |   |   | F | | G |   |   | J | | K | | L |   |   |  ");
 	DrawString(w2s(colx1, ++row), "|   |___|   |   |___| |___|   |   |___| |___| |___|   |   |__");
@@ -438,9 +463,7 @@ bool Synthesiser::OnUserUpdate(float fElapsedTime)
 
 
 	for (auto& w : m_Windows)
-	{
 		w->draw();
-	}
 
 	FillRect(140, 140, 100, 100, olc::RED);
 	DrawSprite(150, 150, m_pPencilIcon.get());
